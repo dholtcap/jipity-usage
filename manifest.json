@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Weekly Usage Pace",
+  "version": "0.1.0",
+  "description": "Adds used %, hourly usage rate, pace, and projected weekly usage to ChatGPT Settings > Usage.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
