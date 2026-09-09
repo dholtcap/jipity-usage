@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jipity Usage</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="popup-shell">
+    <header class="header">
+      <div>
+        <div class="eyebrow">ChatGPT weekly limit</div>
+        <h1>Jipity Usage</h1>
+      </div>
+      <button id="refreshButton" class="refresh-button" type="button" aria-label="Refresh usage">↻</button>
+    </header>
+
+    <section id="loadingState" class="state-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <div>
+        <strong>Loading usage…</strong>
+        <div class="muted">Getting the latest numbers from ChatGPT.</div>
+      </div>
+    </section>
+
+    <section id="errorState" class="state-card error-card" hidden>
+      <div>
+        <strong>Couldn’t refresh</strong>
+        <div id="errorMessage" class="muted"></div>
+        <div class="muted small">Make sure you’re signed in to chatgpt.com.</div>
+      </div>
+    </section>
+
+    <section id="usageView" hidden>
+      <div class="hero-card">
+        <div class="hero-topline">
+          <span>Used</span>
+          <span id="leftPct" class="muted"></span>
+        </div>
+        <div id="usedPct" class="hero-value">—</div>
+        <div class="progress-track" aria-hidden="true">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div class="reset-row">
+          <span id="resetCountdown">—</span>
+          <span id="resetExact" class="muted">—</span>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <article class="metric-card">
+          <div class="metric-label">Avg. usage rate</div>
+          <div id="avgRate" class="metric-value">—</div>
+          <div id="avgRateSub" class="metric-sub">—</div>
+        </article>
+
+        <article class="metric-card">
+          <div class="metric-label">Pace</div>
+          <div id="paceValue" class="metric-value">—</div>
+          <div id="paceSub" class="metric-sub">—</div>
+        </article>
+
+        <article class="metric-card">
+          <div class="metric-label">Safe rate from now</div>
+          <div id="safeRate" class="metric-value">—</div>
+          <div class="metric-sub">Rate that reaches 100% at reset</div>
+        </article>
+
+        <article class="metric-card">
+          <div class="metric-label">Projected at reset</div>
+          <div id="projectedUsed" class="metric-value">—</div>
+          <div id="projectedSub" class="metric-sub">—</div>
+        </article>
+      </div>
+
+      <div id="warning" class="warning" hidden></div>
+
+      <footer class="footer">
+        <span id="updatedText">—</span>
+        <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+      </footer>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
