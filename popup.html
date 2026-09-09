@@ -28,7 +28,7 @@
       <div>
         <strong>Couldn’t refresh</strong>
         <div id="errorMessage" class="muted"></div>
-        <div class="muted small">Make sure you’re signed in to chatgpt.com.</div>
+        <div class="muted small">Showing the last good reading when available.</div>
       </div>
     </section>
 
@@ -36,17 +36,61 @@
       <div class="hero-card">
         <div class="hero-topline">
           <span>Used</span>
+          <span id="statusBadge" class="status-badge">—</span>
           <span id="leftPct" class="muted"></span>
         </div>
         <div id="usedPct" class="hero-value">—</div>
-        <div class="progress-track" aria-hidden="true">
-          <div id="progressFill" class="progress-fill"></div>
+
+        <div class="progress-wrap">
+          <div class="progress-track" aria-hidden="true">
+            <div id="progressFill" class="progress-fill"></div>
+            <div id="targetMarker" class="target-marker"></div>
+          </div>
+          <div id="targetLabel" class="target-label">—</div>
         </div>
+
         <div class="reset-row">
           <span id="resetCountdown">—</span>
           <span id="resetExact" class="muted">—</span>
         </div>
       </div>
+
+      <section class="chart-card" aria-labelledby="chartTitle">
+        <div class="chart-heading">
+          <div>
+            <div class="chart-kicker">Trajectory</div>
+            <div id="chartTitle" class="chart-title">Weekly usage</div>
+          </div>
+          <div class="chart-legend" aria-label="Chart legend">
+            <span><i class="legend-line actual"></i>Usage</span>
+            <span><i class="legend-line ideal"></i>Even pace</span>
+            <span><i class="legend-line projected"></i>Projection</span>
+          </div>
+        </div>
+
+        <svg id="usageChart" class="usage-chart" viewBox="0 0 360 180" role="img" aria-label="Weekly usage trajectory">
+          <line x1="36" y1="14" x2="348" y2="14" class="chart-grid"></line>
+          <line x1="36" y1="84" x2="348" y2="84" class="chart-grid"></line>
+          <line x1="36" y1="154" x2="348" y2="154" class="chart-grid"></line>
+
+          <text x="4" y="18" class="chart-axis-label">100%</text>
+          <text x="12" y="88" class="chart-axis-label">50%</text>
+          <text x="20" y="158" class="chart-axis-label">0%</text>
+
+          <line id="nowGuide" x1="36" y1="14" x2="36" y2="154" class="now-guide"></line>
+          <path id="idealPath" class="chart-line ideal-line"></path>
+          <path id="actualPath" class="chart-line actual-line"></path>
+          <path id="projectionPath" class="chart-line projection-line"></path>
+          <circle id="currentPoint" r="4.5" class="current-point"></circle>
+        </svg>
+
+        <div class="chart-footer">
+          <span>Week start</span>
+          <span id="chartNowLabel">Now</span>
+          <span>Reset</span>
+        </div>
+        <div id="historyNote" class="history-note">History builds automatically while the extension runs.</div>
+      </section>
 
       <div class="metrics-grid">
         <article class="metric-card">
@@ -57,7 +101,7 @@
 
         <article class="metric-card">
           <div class="metric-label">Pace</div>
-          <div id="paceValue" class="metric-value">—</div>
+          <div id="paceValue" class="metric-value accent-text">—</div>
           <div id="paceSub" class="metric-sub">—</div>
         </article>
 
@@ -69,7 +113,7 @@
 
         <article class="metric-card">
           <div class="metric-label">Projected at reset</div>
-          <div id="projectedUsed" class="metric-value">—</div>
+          <div id="projectedUsed" class="metric-value accent-text">—</div>
           <div id="projectedSub" class="metric-sub">—</div>
         </article>
       </div>
@@ -78,7 +122,7 @@
 
       <footer class="footer">
         <span id="updatedText">—</span>
-        <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+        <span class="footer-status"><span id="statusText">Live</span><span id="statusDot" class="status-dot" aria-hidden="true"></span></span>
       </footer>
     </section>
   </main>
