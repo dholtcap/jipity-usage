@@ -7,6 +7,7 @@ const POLL_MINUTES = 1;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const HISTORY_SAMPLE_MS = 5 * 60 * 1000;
 const MAX_HISTORY_POINTS = 2200;
+let fetchInFlight = null;
 
 function decodeJwtPayload(token) {
   try {
@@ -228,7 +229,7 @@ async function updateActionTitle(weekly) {
   });
 }
 
-async function fetchUsageData() {
+async function performUsageFetch() {
   try {
     const sessionContext = await getSessionContext();
     const raw = await fetchUsageFromApi(sessionContext);
@@ -262,6 +263,16 @@ async function fetchUsageData() {
     });
     throw new Error(message);
   }
+}
+
+function fetchUsageData() {
+  if (fetchInFlight) return fetchInFlight;
+
+  fetchInFlight = performUsageFetch().finally(() => {
+    fetchInFlight = null;
+  });
+
+  return fetchInFlight;
 }
 
 chrome.runtime.onInstalled.addListener(() => {
