@@ -30,13 +30,14 @@ function findWeeklyWindow(data) {
   const rateLimit = data?.rate_limit || data?.rate_limits;
   if (!rateLimit) return null;
 
+  // Some older/transitional payloads expose a named weekly window directly.
+  if (rateLimit.weekly) return rateLimit.weekly;
+
   const candidates = [
     rateLimit.primary_window,
     rateLimit.secondary_window,
     rateLimit.primary,
-    rateLimit.secondary,
-    rateLimit.weekly,
-    rateLimit.five_hour
+    rateLimit.secondary
   ].filter(Boolean);
 
   if (!candidates.length) return null;
@@ -53,8 +54,10 @@ function findWeeklyWindow(data) {
     });
   }
 
-  // Fallback for older/transitional payloads that omit the duration.
-  return rateLimit.weekly || rateLimit.secondary_window || rateLimit.primary_window || candidates[0];
+  // If duration metadata is absent, the weekly window has historically been
+  // the secondary window. Primary is retained as a final fallback because
+  // some accounts expose only one aggregate window.
+  return rateLimit.secondary_window || rateLimit.secondary || rateLimit.primary_window || rateLimit.primary || candidates[0];
 }
 
 function normalizeWeeklyWindow(data) {
