@@ -1,0 +1,84 @@
+#cgpt-weekly-pace-panel.cgpt-weekly-pace-panel {
+  margin: 10px 0 18px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  color: inherit;
+  font: inherit;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-note {
+  font-size: 11px;
+  opacity: 0.55;
+  text-align: right;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-metric {
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-label {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 3px;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-value {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.58;
+}
+
+#cgpt-weekly-pace-panel .cgpt-pace-warning {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+@media (max-width: 700px) {
+  #cgpt-weekly-pace-panel .cgpt-pace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #cgpt-weekly-pace-panel .cgpt-pace-title-row {
+    display: block;
+  }
+
+  #cgpt-weekly-pace-panel .cgpt-pace-note {
+    margin-top: 3px;
+    text-align: left;
+  }
+}
