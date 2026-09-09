@@ -5,8 +5,61 @@ const USAGE_ENDPOINTS = [
 ];
 const POLL_MINUTES = 1;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
+const HISTORY_SAMPLE_MS = 5 * 60 * 1000;
+const MAX_HISTORY_POINTS = 2200;
 
-async function getAccessToken() {
+function decodeJwtPayload(token) {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+function findAccountId(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 5) return null;
+
+  const directKeys = [
+    "account_id",
+    "accountId",
+    "chatgpt_account_id",
+    "chatgptAccountId",
+    "active_account_id",
+    "activeAccountId"
+  ];
+
+  for (const key of directKeys) {
+    if (typeof value[key] === "string" && value[key]) return value[key];
+  }
+
+  const directObjects = [
+    value.account,
+    value.activeAccount,
+    value.active_account,
+    value.user?.account
+  ];
+
+  for (const candidate of directObjects) {
+    if (candidate && typeof candidate.id === "string" && candidate.id) {
+      return candidate.id;
+    }
+  }
+
+  for (const nested of Object.values(value)) {
+    if (nested && typeof nested === "object") {
+      const found = findAccountId(nested, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+async function getSessionContext() {
   const response = await fetch(AUTH_ENDPOINT, {
     credentials: "include",
     headers: { Accept: "application/json" }
@@ -17,20 +70,27 @@ async function getAccessToken() {
   }
 
   const session = await response.json();
-  const token = session.accessToken || session.access_token;
+  const accessToken = session.accessToken || session.access_token;
 
-  if (!token) {
+  if (!accessToken) {
     throw new Error("ChatGPT session is not signed in");
   }
 
-  return token;
+  const tokenPayload = decodeJwtPayload(accessToken);
+  const stored = await chrome.storage.local.get(["activeAccountId"]);
+  const accountId =
+    findAccountId(session) ||
+    findAccountId(tokenPayload) ||
+    stored.activeAccountId ||
+    null;
+
+  return { accessToken, accountId };
 }
 
 function findWeeklyWindow(data) {
   const rateLimit = data?.rate_limit || data?.rate_limits;
   if (!rateLimit) return null;
 
-  // Some older/transitional payloads expose a named weekly window directly.
   if (rateLimit.weekly) return rateLimit.weekly;
 
   const candidates = [
@@ -54,9 +114,6 @@ function findWeeklyWindow(data) {
     });
   }
 
-  // If duration metadata is absent, the weekly window has historically been
-  // the secondary window. Primary is retained as a final fallback because
-  // some accounts expose only one aggregate window.
   return rateLimit.secondary_window || rateLimit.secondary || rateLimit.primary_window || rateLimit.primary || candidates[0];
 }
 
@@ -92,17 +149,23 @@ function normalizeWeeklyWindow(data) {
   };
 }
 
-async function fetchUsageFromApi(accessToken) {
+async function fetchUsageFromApi({ accessToken, accountId }) {
   let lastError = null;
 
   for (const endpoint of USAGE_ENDPOINTS) {
     try {
+      const headers = {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`
+      };
+
+      if (accountId) {
+        headers["ChatGPT-Account-Id"] = accountId;
+      }
+
       const response = await fetch(endpoint, {
         credentials: "include",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${accessToken}`
-        }
+        headers
       });
 
       if (!response.ok) {
@@ -119,6 +182,40 @@ async function fetchUsageFromApi(accessToken) {
   throw lastError || new Error("Could not fetch ChatGPT usage");
 }
 
+async function recordHistory(weekly) {
+  const now = Date.now();
+  const startAtMs = weekly.resetAtMs - weekly.windowSeconds * 1000;
+  const stored = await chrome.storage.local.get(["usageHistory"]);
+  let history = Array.isArray(stored.usageHistory) ? stored.usageHistory : [];
+
+  history = history.filter((point) =>
+    Number(point.resetAtMs) === Number(weekly.resetAtMs) &&
+    Number(point.ts) >= startAtMs &&
+    Number(point.ts) <= weekly.resetAtMs
+  );
+
+  const last = history[history.length - 1];
+  const shouldAdd =
+    !last ||
+    Math.abs(Number(last.usedPct) - weekly.usedPct) >= 0.05 ||
+    now - Number(last.ts) >= HISTORY_SAMPLE_MS;
+
+  if (shouldAdd) {
+    history.push({
+      ts: now,
+      usedPct: weekly.usedPct,
+      resetAtMs: weekly.resetAtMs
+    });
+  }
+
+  if (history.length > MAX_HISTORY_POINTS) {
+    history = history.slice(history.length - MAX_HISTORY_POINTS);
+  }
+
+  await chrome.storage.local.set({ usageHistory: history });
+  return history;
+}
+
 async function updateActionTitle(weekly) {
   if (!weekly) {
     await chrome.action.setTitle({ title: "Jipity Usage" });
@@ -133,25 +230,28 @@ async function updateActionTitle(weekly) {
 
 async function fetchUsageData() {
   try {
-    const accessToken = await getAccessToken();
-    const raw = await fetchUsageFromApi(accessToken);
+    const sessionContext = await getSessionContext();
+    const raw = await fetchUsageFromApi(sessionContext);
     const weekly = normalizeWeeklyWindow(raw);
 
     if (!weekly) {
       throw new Error("Weekly usage window was not present in the usage response");
     }
 
+    const activeAccountId = raw?.account_id || sessionContext.accountId || null;
     const usageData = {
-      raw,
       weekly,
       lastUpdated: Date.now()
     };
 
     await chrome.storage.local.set({
       usageData,
-      lastError: null
+      activeAccountId,
+      lastError: null,
+      lastErrorAt: null
     });
 
+    await recordHistory(weekly);
     await updateActionTitle(weekly);
     return usageData;
   } catch (error) {
@@ -196,10 +296,11 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 
   if (request?.action === "getUsage") {
-    chrome.storage.local.get(["usageData", "lastError"], (stored) => {
+    chrome.storage.local.get(["usageData", "usageHistory", "lastError"], (stored) => {
       sendResponse({
         ok: Boolean(stored.usageData),
         data: stored.usageData || null,
+        history: stored.usageHistory || [],
         error: stored.lastError || null
       });
     });
