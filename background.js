@@ -5,8 +5,10 @@ const USAGE_ENDPOINTS = [
 ];
 const POLL_MINUTES = 1;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
-const HISTORY_SAMPLE_MS = 5 * 60 * 1000;
-const MAX_HISTORY_POINTS = 2200;
+const HISTORY_SAMPLE_MS = 60 * 1000;
+const MAX_HISTORY_POINTS = 10_500;
+const AUTH_CACHE_KEY = "sessionAuthCache";
+const AUTH_EXPIRY_SKEW_MS = 60 * 1000;
 let fetchInFlight = null;
 
 function decodeJwtPayload(token) {
@@ -19,6 +21,12 @@ function decodeJwtPayload(token) {
   } catch {
     return null;
   }
+}
+
+function tokenExpiryMs(token) {
+  const payload = decodeJwtPayload(token);
+  const expirySeconds = Number(payload?.exp);
+  return Number.isFinite(expirySeconds) ? expirySeconds * 1000 : null;
 }
 
 function findAccountId(value, depth = 0) {
@@ -60,32 +68,94 @@ function findAccountId(value, depth = 0) {
   return null;
 }
 
+async function cacheAuthContext(accessToken, accountId) {
+  try {
+    await chrome.storage.session.set({
+      [AUTH_CACHE_KEY]: {
+        accessToken,
+        accountId: accountId || null,
+        expiresAtMs: tokenExpiryMs(accessToken),
+        cachedAtMs: Date.now()
+      }
+    });
+  } catch {
+    // chrome.storage.session is best-effort. Live auth still works without it.
+  }
+}
+
+async function clearCachedAuthContext() {
+  try {
+    await chrome.storage.session.remove(AUTH_CACHE_KEY);
+  } catch {
+    // Ignore storage.session failures; the cache is only a resilience aid.
+  }
+}
+
+async function getCachedAuthContext() {
+  try {
+    const stored = await chrome.storage.session.get([AUTH_CACHE_KEY]);
+    const cached = stored?.[AUTH_CACHE_KEY];
+    if (!cached?.accessToken) return null;
+
+    const expiresAtMs = Number(cached.expiresAtMs);
+    if (
+      Number.isFinite(expiresAtMs) &&
+      Date.now() >= expiresAtMs - AUTH_EXPIRY_SKEW_MS
+    ) {
+      await clearCachedAuthContext();
+      return null;
+    }
+
+    return {
+      accessToken: cached.accessToken,
+      accountId: cached.accountId || null,
+      source: "session-cache"
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function getSessionContext() {
-  const response = await fetch(AUTH_ENDPOINT, {
-    credentials: "include",
-    headers: { Accept: "application/json" }
-  });
+  let liveSessionError = null;
 
-  if (!response.ok) {
-    throw new Error(`Could not read ChatGPT session (HTTP ${response.status})`);
+  try {
+    const response = await fetch(AUTH_ENDPOINT, {
+      credentials: "include",
+      headers: { Accept: "application/json" }
+    });
+
+    if (!response.ok) {
+      const error = new Error(`Could not read ChatGPT session (HTTP ${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
+
+    const session = await response.json();
+    const accessToken = session.accessToken || session.access_token;
+
+    if (!accessToken) {
+      throw new Error("ChatGPT session is not signed in");
+    }
+
+    const tokenPayload = decodeJwtPayload(accessToken);
+    const stored = await chrome.storage.local.get(["activeAccountId"]);
+    const accountId =
+      findAccountId(session) ||
+      findAccountId(tokenPayload) ||
+      stored.activeAccountId ||
+      null;
+
+    await cacheAuthContext(accessToken, accountId);
+    return { accessToken, accountId, source: "live-session" };
+  } catch (error) {
+    liveSessionError = error;
   }
 
-  const session = await response.json();
-  const accessToken = session.accessToken || session.access_token;
+  const cached = await getCachedAuthContext();
+  if (cached) return cached;
 
-  if (!accessToken) {
-    throw new Error("ChatGPT session is not signed in");
-  }
-
-  const tokenPayload = decodeJwtPayload(accessToken);
-  const stored = await chrome.storage.local.get(["activeAccountId"]);
-  const accountId =
-    findAccountId(session) ||
-    findAccountId(tokenPayload) ||
-    stored.activeAccountId ||
-    null;
-
-  return { accessToken, accountId };
+  throw liveSessionError || new Error("ChatGPT session is not signed in");
 }
 
 function findWeeklyWindow(data) {
@@ -150,6 +220,12 @@ function normalizeWeeklyWindow(data) {
   };
 }
 
+function httpError(prefix, status) {
+  const error = new Error(`${prefix} (HTTP ${status})`);
+  error.status = status;
+  return error;
+}
+
 async function fetchUsageFromApi({ accessToken, accountId }) {
   let lastError = null;
 
@@ -170,7 +246,7 @@ async function fetchUsageFromApi({ accessToken, accountId }) {
       });
 
       if (!response.ok) {
-        lastError = new Error(`Usage request failed (HTTP ${response.status})`);
+        lastError = httpError("Usage request failed", response.status);
         continue;
       }
 
@@ -183,37 +259,46 @@ async function fetchUsageFromApi({ accessToken, accountId }) {
   throw lastError || new Error("Could not fetch ChatGPT usage");
 }
 
-async function recordHistory(weekly) {
+async function buildUpdatedHistory(weekly) {
   const now = Date.now();
+  const sampleTs = Math.min(now, weekly.resetAtMs);
   const startAtMs = weekly.resetAtMs - weekly.windowSeconds * 1000;
   const stored = await chrome.storage.local.get(["usageHistory"]);
   let history = Array.isArray(stored.usageHistory) ? stored.usageHistory : [];
 
-  history = history.filter((point) =>
-    Number(point.resetAtMs) === Number(weekly.resetAtMs) &&
-    Number(point.ts) >= startAtMs &&
-    Number(point.ts) <= weekly.resetAtMs
-  );
+  history = history
+    .filter((point) =>
+      Number(point.resetAtMs) === Number(weekly.resetAtMs) &&
+      Number(point.ts) >= startAtMs &&
+      Number(point.ts) <= weekly.resetAtMs &&
+      Number.isFinite(Number(point.usedPct))
+    )
+    .sort((a, b) => Number(a.ts) - Number(b.ts));
+
+  const nextPoint = {
+    ts: sampleTs,
+    usedPct: weekly.usedPct,
+    resetAtMs: weekly.resetAtMs
+  };
 
   const last = history[history.length - 1];
-  const shouldAdd =
-    !last ||
-    Math.abs(Number(last.usedPct) - weekly.usedPct) >= 0.05 ||
-    now - Number(last.ts) >= HISTORY_SAMPLE_MS;
-
-  if (shouldAdd) {
-    history.push({
-      ts: now,
-      usedPct: weekly.usedPct,
-      resetAtMs: weekly.resetAtMs
-    });
+  if (!last) {
+    history.push(nextPoint);
+  } else if (sampleTs - Number(last.ts) >= HISTORY_SAMPLE_MS) {
+    history.push(nextPoint);
+  } else if (
+    sampleTs >= Number(last.ts) &&
+    Math.abs(Number(last.usedPct) - weekly.usedPct) >= 0.001
+  ) {
+    // Keep at most one point per minute, but make that point the newest
+    // observation so a burst of popup/manual refreshes does not lose data.
+    history[history.length - 1] = nextPoint;
   }
 
   if (history.length > MAX_HISTORY_POINTS) {
     history = history.slice(history.length - MAX_HISTORY_POINTS);
   }
 
-  await chrome.storage.local.set({ usageHistory: history });
   return history;
 }
 
@@ -244,18 +329,26 @@ async function performUsageFetch() {
       weekly,
       lastUpdated: Date.now()
     };
+    const usageHistory = await buildUpdatedHistory(weekly);
 
+    // Store the current reading and the history snapshot together so popup
+    // renders never observe a new usage value with stale chart history.
     await chrome.storage.local.set({
       usageData,
+      usageHistory,
       activeAccountId,
       lastError: null,
       lastErrorAt: null
     });
 
-    await recordHistory(weekly);
     await updateActionTitle(weekly);
     return usageData;
   } catch (error) {
+    const status = Number(error?.status);
+    if (status === 401 || status === 403) {
+      await clearCachedAuthContext();
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     await chrome.storage.local.set({
       lastError: message,
@@ -275,13 +368,20 @@ function fetchUsageData() {
   return fetchInFlight;
 }
 
+async function ensureRefreshAlarm() {
+  const existing = await chrome.alarms.get("refreshUsage");
+  if (!existing) {
+    chrome.alarms.create("refreshUsage", { periodInMinutes: POLL_MINUTES });
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create("refreshUsage", { periodInMinutes: POLL_MINUTES });
+  ensureRefreshAlarm().catch(() => {});
   fetchUsageData().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create("refreshUsage", { periodInMinutes: POLL_MINUTES });
+  ensureRefreshAlarm().catch(() => {});
   fetchUsageData().catch(() => {});
 });
 
@@ -321,5 +421,4 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   return false;
 });
 
-chrome.alarms.create("refreshUsage", { periodInMinutes: POLL_MINUTES });
-fetchUsageData().catch(() => {});
+ensureRefreshAlarm().catch(() => {});
