@@ -20,7 +20,7 @@
       <div class="spinner" aria-hidden="true"></div>
       <div>
         <strong>Loading usage…</strong>
-        <div class="muted">Getting the latest numbers from ChatGPT.</div>
+        <div class="muted">Reading your latest cached usage.</div>
       </div>
     </section>
 
@@ -55,41 +55,95 @@
         </div>
       </div>
 
-      <section class="chart-card" aria-labelledby="chartTitle">
+      <section class="chart-card" aria-labelledby="usageChartTitle">
         <div class="chart-heading">
           <div>
             <div class="chart-kicker">Trajectory</div>
-            <div id="chartTitle" class="chart-title">Weekly usage</div>
+            <div id="usageChartTitle" class="chart-title">Weekly usage</div>
           </div>
           <div class="chart-legend" aria-label="Chart legend">
-            <span><i class="legend-line actual"></i>Usage</span>
+            <span><i class="legend-line actual"></i>Observed</span>
             <span><i class="legend-line ideal"></i>Even pace</span>
             <span><i class="legend-line projected"></i>Projection</span>
           </div>
         </div>
 
-        <svg id="usageChart" class="usage-chart" viewBox="0 0 360 180" role="img" aria-label="Weekly usage trajectory">
-          <line x1="36" y1="14" x2="348" y2="14" class="chart-grid"></line>
-          <line x1="36" y1="84" x2="348" y2="84" class="chart-grid"></line>
-          <line x1="36" y1="154" x2="348" y2="154" class="chart-grid"></line>
+        <div class="chart-wrap">
+          <svg id="usageChart" class="usage-chart" viewBox="0 0 390 200" role="img" aria-label="Weekly usage trajectory">
+            <line x1="42" y1="16" x2="378" y2="16" class="chart-grid"></line>
+            <line x1="42" y1="96" x2="378" y2="96" class="chart-grid"></line>
+            <line x1="42" y1="176" x2="378" y2="176" class="chart-grid"></line>
+            <text x="2" y="20" class="chart-axis-label">100%</text>
+            <text x="12" y="100" class="chart-axis-label">50%</text>
+            <text x="22" y="180" class="chart-axis-label">0%</text>
+            <line id="usageHoverGuide" x1="42" y1="16" x2="42" y2="176" class="hover-guide" hidden></line>
+            <line id="nowGuide" x1="42" y1="16" x2="42" y2="176" class="now-guide"></line>
+            <path id="idealPath" class="chart-line ideal-line"></path>
+            <path id="unknownPath" class="chart-line unknown-line"></path>
+            <path id="actualPath" class="chart-line actual-line"></path>
+            <g id="changeMarkers"></g>
+            <path id="projectionPath" class="chart-line projection-line"></path>
+            <circle id="currentPoint" r="4.8" class="current-point"></circle>
+            <rect id="usageHitArea" x="42" y="16" width="336" height="160" class="chart-hit-area"></rect>
+          </svg>
+          <div id="usageTooltip" class="chart-tooltip" hidden></div>
+        </div>
 
-          <text x="4" y="18" class="chart-axis-label">100%</text>
-          <text x="12" y="88" class="chart-axis-label">50%</text>
-          <text x="20" y="158" class="chart-axis-label">0%</text>
-
-          <line id="nowGuide" x1="36" y1="14" x2="36" y2="154" class="now-guide"></line>
-          <path id="idealPath" class="chart-line ideal-line"></path>
-          <path id="actualPath" class="chart-line actual-line"></path>
-          <path id="projectionPath" class="chart-line projection-line"></path>
-          <circle id="currentPoint" r="4.5" class="current-point"></circle>
-        </svg>
-
-        <div class="chart-footer">
-          <span>Week start</span>
+        <div class="chart-footer precise-footer">
+          <span id="chartStartLabel">Week start</span>
           <span id="chartNowLabel">Now</span>
-          <span>Reset</span>
+          <span id="chartResetLabel">Reset</span>
         </div>
         <div id="historyNote" class="history-note">History builds automatically while the extension runs.</div>
+      </section>
+
+      <section class="chart-card" aria-labelledby="rateChartTitle">
+        <div class="chart-heading rate-heading">
+          <div>
+            <div class="chart-kicker">Intensity</div>
+            <div id="rateChartTitle" class="chart-title">Usage rate</div>
+          </div>
+          <div class="window-switcher" role="group" aria-label="Rate averaging window">
+            <button class="rate-window-button" data-window="30">30m</button>
+            <button class="rate-window-button active" data-window="60">1h</button>
+            <button class="rate-window-button" data-window="180">3h</button>
+          </div>
+        </div>
+
+        <div class="rate-summary">
+          <div>
+            <div class="summary-label">Current rolling rate</div>
+            <div id="rollingRateValue" class="summary-value">—</div>
+          </div>
+          <div>
+            <div class="summary-label">Peak rolling rate</div>
+            <div id="peakRateValue" class="summary-value">—</div>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <svg id="rateChart" class="usage-chart rate-chart" viewBox="0 0 390 200" role="img" aria-label="Usage rate over time">
+            <line x1="42" y1="16" x2="378" y2="16" class="chart-grid"></line>
+            <line x1="42" y1="96" x2="378" y2="96" class="chart-grid"></line>
+            <line x1="42" y1="176" x2="378" y2="176" class="chart-grid"></line>
+            <text id="rateTopLabel" x="2" y="20" class="chart-axis-label">—</text>
+            <text id="rateMidLabel" x="2" y="100" class="chart-axis-label">—</text>
+            <text x="22" y="180" class="chart-axis-label">0</text>
+            <line id="evenRateLine" x1="42" y1="176" x2="378" y2="176" class="even-rate-line"></line>
+            <line id="rateHoverGuide" x1="42" y1="16" x2="42" y2="176" class="hover-guide" hidden></line>
+            <path id="ratePath" class="chart-line rate-line"></path>
+            <circle id="rateCurrentPoint" r="4.3" class="rate-current-point"></circle>
+            <rect id="rateHitArea" x="42" y="16" width="336" height="160" class="chart-hit-area"></rect>
+          </svg>
+          <div id="rateTooltip" class="chart-tooltip" hidden></div>
+        </div>
+
+        <div class="chart-footer precise-footer">
+          <span id="rateStartLabel">Observed start</span>
+          <span id="rateWindowLabel">1h rolling</span>
+          <span id="rateEndLabel">Now</span>
+        </div>
+        <div id="rateNote" class="history-note">Rolling rate uses locally observed changes in weekly usage.</div>
       </section>
 
       <div class="metrics-grid">
@@ -98,19 +152,16 @@
           <div id="avgRate" class="metric-value">—</div>
           <div id="avgRateSub" class="metric-sub">—</div>
         </article>
-
         <article class="metric-card">
           <div class="metric-label">Pace</div>
           <div id="paceValue" class="metric-value accent-text">—</div>
           <div id="paceSub" class="metric-sub">—</div>
         </article>
-
         <article class="metric-card">
           <div class="metric-label">Safe rate from now</div>
           <div id="safeRate" class="metric-value">—</div>
           <div class="metric-sub">Rate that reaches 100% at reset</div>
         </article>
-
         <article class="metric-card">
           <div class="metric-label">Projected at reset</div>
           <div id="projectedUsed" class="metric-value accent-text">—</div>
