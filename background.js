@@ -3,12 +3,14 @@ const USAGE_ENDPOINTS = [
   "https://chatgpt.com/backend-api/wham/usage",
   "https://chatgpt.com/backend-api/codex/usage"
 ];
+
 const POLL_MINUTES = 1;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const HISTORY_SAMPLE_MS = 60 * 1000;
 const MAX_HISTORY_POINTS = 10_500;
 const AUTH_CACHE_KEY = "sessionAuthCache";
 const AUTH_EXPIRY_SKEW_MS = 60 * 1000;
+
 let fetchInFlight = null;
 
 function decodeJwtPayload(token) {
@@ -32,27 +34,23 @@ function tokenExpiryMs(token) {
 function findAccountId(value, depth = 0) {
   if (!value || typeof value !== "object" || depth > 5) return null;
 
-  const directKeys = [
+  for (const key of [
     "account_id",
     "accountId",
     "chatgpt_account_id",
     "chatgptAccountId",
     "active_account_id",
     "activeAccountId"
-  ];
-
-  for (const key of directKeys) {
+  ]) {
     if (typeof value[key] === "string" && value[key]) return value[key];
   }
 
-  const directObjects = [
+  for (const candidate of [
     value.account,
     value.activeAccount,
     value.active_account,
     value.user?.account
-  ];
-
-  for (const candidate of directObjects) {
+  ]) {
     if (candidate && typeof candidate.id === "string" && candidate.id) {
       return candidate.id;
     }
@@ -79,7 +77,7 @@ async function cacheAuthContext(accessToken, accountId) {
       }
     });
   } catch {
-    // chrome.storage.session is best-effort. Live auth still works without it.
+    // Session caching is only a latency optimization.
   }
 }
 
@@ -87,7 +85,7 @@ async function clearCachedAuthContext() {
   try {
     await chrome.storage.session.remove(AUTH_CACHE_KEY);
   } catch {
-    // Ignore storage.session failures; the cache is only a resilience aid.
+    // Best effort.
   }
 }
 
@@ -116,46 +114,47 @@ async function getCachedAuthContext() {
   }
 }
 
-async function getSessionContext() {
-  let liveSessionError = null;
+async function getLiveSessionContext() {
+  const response = await fetch(AUTH_ENDPOINT, {
+    credentials: "include",
+    cache: "no-store",
+    headers: { Accept: "application/json" }
+  });
 
-  try {
-    const response = await fetch(AUTH_ENDPOINT, {
-      credentials: "include",
-      headers: { Accept: "application/json" }
-    });
-
-    if (!response.ok) {
-      const error = new Error(`Could not read ChatGPT session (HTTP ${response.status})`);
-      error.status = response.status;
-      throw error;
-    }
-
-    const session = await response.json();
-    const accessToken = session.accessToken || session.access_token;
-
-    if (!accessToken) {
-      throw new Error("ChatGPT session is not signed in");
-    }
-
-    const tokenPayload = decodeJwtPayload(accessToken);
-    const stored = await chrome.storage.local.get(["activeAccountId"]);
-    const accountId =
-      findAccountId(session) ||
-      findAccountId(tokenPayload) ||
-      stored.activeAccountId ||
-      null;
-
-    await cacheAuthContext(accessToken, accountId);
-    return { accessToken, accountId, source: "live-session" };
-  } catch (error) {
-    liveSessionError = error;
+  if (!response.ok) {
+    const error = new Error(`Could not read ChatGPT session (HTTP ${response.status})`);
+    error.status = response.status;
+    throw error;
   }
 
-  const cached = await getCachedAuthContext();
-  if (cached) return cached;
+  const session = await response.json();
+  const accessToken = session.accessToken || session.access_token;
 
-  throw liveSessionError || new Error("ChatGPT session is not signed in");
+  if (!accessToken) {
+    throw new Error("ChatGPT session is not signed in");
+  }
+
+  const tokenPayload = decodeJwtPayload(accessToken);
+  const stored = await chrome.storage.local.get(["activeAccountId"]);
+  const accountId =
+    findAccountId(session) ||
+    findAccountId(tokenPayload) ||
+    stored.activeAccountId ||
+    null;
+
+  await cacheAuthContext(accessToken, accountId);
+
+  return {
+    accessToken,
+    accountId,
+    source: "live-session"
+  };
+}
+
+async function getFastSessionContext() {
+  // Prefer the already-validated session token so the popup only needs one
+  // network request in the common case.
+  return (await getCachedAuthContext()) || getLiveSessionContext();
 }
 
 function findWeeklyWindow(data) {
@@ -185,7 +184,13 @@ function findWeeklyWindow(data) {
     });
   }
 
-  return rateLimit.secondary_window || rateLimit.secondary || rateLimit.primary_window || rateLimit.primary || candidates[0];
+  return (
+    rateLimit.secondary_window ||
+    rateLimit.secondary ||
+    rateLimit.primary_window ||
+    rateLimit.primary ||
+    candidates[0]
+  );
 }
 
 function normalizeWeeklyWindow(data) {
@@ -242,6 +247,7 @@ async function fetchUsageFromApi({ accessToken, accountId }) {
 
       const response = await fetch(endpoint, {
         credentials: "include",
+        cache: "no-store",
         headers
       });
 
@@ -257,6 +263,29 @@ async function fetchUsageFromApi({ accessToken, accountId }) {
   }
 
   throw lastError || new Error("Could not fetch ChatGPT usage");
+}
+
+async function fetchUsageWithAuthRecovery() {
+  let context = await getFastSessionContext();
+
+  try {
+    const raw = await fetchUsageFromApi(context);
+    return { raw, context };
+  } catch (error) {
+    const status = Number(error?.status);
+
+    if (
+      context.source === "session-cache" &&
+      (status === 401 || status === 403)
+    ) {
+      await clearCachedAuthContext();
+      context = await getLiveSessionContext();
+      const raw = await fetchUsageFromApi(context);
+      return { raw, context };
+    }
+
+    throw error;
+  }
 }
 
 async function buildUpdatedHistory(weekly) {
@@ -282,16 +311,15 @@ async function buildUpdatedHistory(weekly) {
   };
 
   const last = history[history.length - 1];
+
   if (!last) {
     history.push(nextPoint);
   } else if (sampleTs - Number(last.ts) >= HISTORY_SAMPLE_MS) {
     history.push(nextPoint);
   } else if (
     sampleTs >= Number(last.ts) &&
-    Math.abs(Number(last.usedPct) - weekly.usedPct) >= 0.001
+    Math.abs(Number(last.usedPct) - weekly.usedPct) >= 0.0001
   ) {
-    // Keep at most one point per minute, but make that point the newest
-    // observation so a burst of popup/manual refreshes does not lose data.
     history[history.length - 1] = nextPoint;
   }
 
@@ -310,29 +338,26 @@ async function updateActionTitle(weekly) {
 
   const remainingHours = Math.max(0, (weekly.resetAtMs - Date.now()) / 3_600_000);
   await chrome.action.setTitle({
-    title: `Jipity Usage — ${weekly.usedPct.toFixed(0)}% used, ${remainingHours.toFixed(1)}h to reset`
+    title: `Jipity Usage — ${weekly.usedPct.toFixed(1)}% used, ${remainingHours.toFixed(1)}h to reset`
   });
 }
 
 async function performUsageFetch() {
   try {
-    const sessionContext = await getSessionContext();
-    const raw = await fetchUsageFromApi(sessionContext);
+    const { raw, context } = await fetchUsageWithAuthRecovery();
     const weekly = normalizeWeeklyWindow(raw);
 
     if (!weekly) {
       throw new Error("Weekly usage window was not present in the usage response");
     }
 
-    const activeAccountId = raw?.account_id || sessionContext.accountId || null;
+    const activeAccountId = raw?.account_id || context.accountId || null;
     const usageData = {
       weekly,
       lastUpdated: Date.now()
     };
     const usageHistory = await buildUpdatedHistory(weekly);
 
-    // Store the current reading and the history snapshot together so popup
-    // renders never observe a new usage value with stale chart history.
     await chrome.storage.local.set({
       usageData,
       usageHistory,
@@ -354,6 +379,7 @@ async function performUsageFetch() {
       lastError: message,
       lastErrorAt: Date.now()
     });
+
     throw new Error(message);
   }
 }
