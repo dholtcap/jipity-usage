@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Jipity Usage",
-  "version": "0.3.1",
-  "description": "Tracks ChatGPT weekly usage with live pace, projections, history, and a visual browser popup.",
+  "version": "0.4.0",
+  "description": "Tracks ChatGPT weekly usage with fast live refresh, detailed history, projections, and rolling usage-rate charts.",
   "permissions": [
     "storage",
     "alarms"
